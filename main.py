@@ -9,37 +9,19 @@ class Dobot:
     def __init__(self, port):
         self.interf = DobotSerialInterface('COM' + str(port))
         self.interf.set_speed()
+        self.interf.set_ee_config()
         self.interf.set_playback_config()
 
     def debug(self):
         print('Joint Angles: ' + str(self.interf.current_status.angles))
 
-    def jmove(self, base, rear, front, rot):
-        self.interf.send_absolute_angles(
-            base, rear, front, rot,
-            move_mode=DobotSerialInterface.MOVE_MODE_JOINTS)
-        time.sleep(0.25)
+    def jmove(self, base, rear, front, rot, suction):
+        self.interf.send_angle_suction_command(
+            base, rear, front, rot, suction)
+        time.sleep(1)
 
     def zero(self):
-        self.jmove(0, 0, 0, 0)
-
-    def dzero(self):
-        self.zero()
-        self.debug()
-
-    def djmove(self, base, rear, front, rot):
-        self.jmove(base, rear, front, rot)
-        self.debug()
-
-def r2():
-    d = Dobot('6')
-    d.dzero()
-    d.djmove(0, 45, 0, 0)
-    d.dzero()
-    d.djmove(0, 0, 45, 0)
-    d.dzero()
-    d.djmove(0, 0, 0, 45)
-    d.dzero()
+        self.jmove(0, 0, 0, 0, 0)
 
 def capshow(n):
     cap = cv2.VideoCapture(n)
@@ -50,10 +32,10 @@ def capshow(n):
         #M = cv2.getRotationMatrix2D((cols/2,rows/2),90,1)
         #dst = cv2.warpAffine(img,M,(cols,rows))
 
-        ratio = 2
-        lowv = 100
+        ratio = 3
+        lowv = 80
 
-        circs = True
+        circs = False
 
         if circs:
             for c in object_centroids(img, lowv, ratio):
@@ -61,7 +43,24 @@ def capshow(n):
 
             cv2.imshow('circs', img)
         else:
-            cv2.imshow('blobs', picture_to_blobs(img, lowv, ratio))
+            l, a, b = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2LAB))
+
+            clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
+            cl = clahe.apply(l)
+
+            f = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+
+            # cv2.imshow('l', f)
+
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            h, s, v = cv2.split(hsv)
+
+            edge = cv2.Canny(f, lowv, lowv * ratio)
+            edges = np.repeat(edge[:, :, np.newaxis], 3, axis=2)
+
+            cv2.imshow('edges', f | edges)
+
+            #cv2.imshow('blobs', picture_to_blobs(img, lowv, ratio))
 
         key = cv2.waitKey(100)
         if key == 27:
@@ -127,23 +126,21 @@ def object_centroids(img, lowv, ratio):
     Cy = [int(m['m01'] / m['m00']) for m in fM]
     return zip(Cx, Cy)
 
-def edge_test(lowv):
-    cap = cv2.VideoCapture(1)
-    ret, img = cap.read()
-
-    ratio = 2
-
-    for c in object_centroids(img, lowv, ratio):
-        cv2.circle(img, c, 10, (255, 0, 0), -1)
-
-    cv2.imshow('circles', img)
-
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
 def r2():
     acapshow(1)
     return Dobot(6)
+
+def r3():
+    d = Dobot(6)
+    d.jmove(0, 0, 0, 0, 1)
+    time.sleep(1)
+
+    for rot in range(-20, 20, 5):
+        d.jmove(0, 0, 0, rot, 1)
+        time.sleep(0.25)
+
+    d.zero()
+    time.sleep(1)
 
 if __name__ == '__main__':
     capshow(1)

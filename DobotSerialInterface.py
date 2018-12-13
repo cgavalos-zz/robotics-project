@@ -82,6 +82,17 @@ class DobotSerialInterface:
         self.serial_connection.write(cmd_str)
         # print "sending", binascii.b2a_hex(cmd_str)
 
+    def send_angle_suction_command(self, base, rear, front, rot, suction_state):
+        cmd_str_10 = [0]*10
+        cmd_str_10[0] = 6
+        cmd_str_10[2] = base
+        cmd_str_10[3] = rear
+        cmd_str_10[4] = front
+        cmd_str_10[5] = rot
+        cmd_str_10[6] = suction_state # 0 for off, 1 for on
+        cmd_str_10[7] = self.MOVE_MODE_JOINTS
+        self._send_command(cmd_str_10)
+
     def _send_absolute_command(self, cartesian, p1, p2, p3, p4, move_mode):
         # global cmd_str_10
         cmd_str_10 = [0]*10
@@ -147,6 +158,12 @@ class DobotSerialInterface:
         cmd_str_10[7] = 1000  # LinearAcc
         self._send_command(cmd_str_10)
 
+    def set_ee_config(self):
+        cmd_str_10 = [0]*10
+        cmd_str_10[0] = 9
+        cmd_str_10[1] = 4
+        cmd_str_10[2] = 0 # Suction cap
+        self._send_command(cmd_str_10)
 
     def read_loop(self):
         #print "Entering loop"
