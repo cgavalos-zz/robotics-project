@@ -5,9 +5,15 @@ import cv2
 import threading
 import numpy as np
 
+from kin_commands import *
+
 class Dobot:
+
+    P = np.array([
+        [0, 0, 0], [0, 0, 103], [0, 0, 135], [160, 0, 0], [43, 0, -72]])
+
     def __init__(self, port):
-        self.interf = DobotSerialInterface('COM' + str(port))
+        self.interf = DobotSerialInterface(port)
         self.interf.set_speed()
         self.interf.set_ee_config()
         self.interf.set_playback_config()
@@ -22,6 +28,61 @@ class Dobot:
 
     def zero(self):
         self.jmove(0, 0, 0, 0, 0)
+
+    def fkin(self, q):
+        p01 = Dobot.P[0]
+        p12 = Dobot.P[1]
+        p23 = Dobot.P[2]
+        p34 = Dobot.P[3]
+        p4t = Dobot.P[4]
+        return p01 + np.matmul(Rz(q[0]), (p12 + np.matmul(Ry(q[1]), (p23 + np.matmul(Ry(q[2]), (p34 + np.matmul(Ry(q[3]), p4t)))))))
+
+    def real_to_model_q(self, base, rear, front):
+        return np.array([base, rear, front - rear, -front])
+
+    def model_to_real_q(self, q1, q2, q3, q4):
+        return np.array([q1, q2, q2 + q3])
+
+    def invkin(self, p0t):
+
+        ex = np.array([1, 0, 0])
+        ey = np.array([0, 1, 0])
+        ez = np.array([0, 0, 1])
+
+        p12 = Dobot.P[1]
+        p23 = Dobot.P[2]
+        p34 = Dobot.P[3]
+        p4t = Dobot.P[4]
+
+        q1v = -subprob4(ez, ey, p0t, np.dot(ey, p12 + p23 + p34 + p4t))
+
+        q1 = q1v[0]
+
+        K = np.matmul(Rz(-q1), p0t) - p12 - p4t
+
+        q3v = subprob3(ey, -p34, p23, norm(K))
+
+        if abs(q3v[0]) < abs(q3v[1]):
+            q3 = q3v[0]
+        else:
+            q3 = q3v[1]
+
+        q2 = -subprob1(ey, K, p23 + np.matmul(Ry(q3), p34))
+
+        q4 = -q2 - q3
+
+        return [q1, q2, q3, q4]
+
+    def move_to(self, p0t):
+        q = self.invkin(p0t)
+        qrv = self.model_to_real_q(q[0], q[1], q[2], q[3]) * 180 / math.pi
+        self.jmove(qrv[0] , qrv[1], qrv[2], 0, 0)
+
+    def pos_zero(self):
+        return self.fkin([0, 0, 0, 0])
+
+    def move_zero(self):
+        self.move_to(self.pos_zero())
 
 def capshow(n):
     cap = cv2.VideoCapture(n)
@@ -126,12 +187,43 @@ def object_centroids(img, lowv, ratio):
     Cy = [int(m['m01'] / m['m00']) for m in fM]
     return zip(Cx, Cy)
 
+def get_results(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    detector = apriltag.Detector()
+    return (img, detector.detect(gray))
+
+def annotate_image(img, rs):
+    first = True
+    for r in rs:
+        if first:
+            first = False
+        c = r.center
+        cv2.circle(img, tuple([int(x) for x in c]), 2, (r.tag_id, r.tag_id, r.tag_id))
+
+        corns = r.corners
+
+        i = 0
+        for corner in corns:
+            if i == 0:
+                c = (255, 0, 0)
+            elif i == 1:
+                c = (0, 255, 0)
+            elif i == 2:
+                c = (0, 0, 255)
+            else:
+                c = (0, 255, 255)
+
+            cv2.circle(img, tuple([int(x) for x in corner]), 2, c)
+            i += 1
+
+    return img
+
 def r2():
     acapshow(1)
     return Dobot(6)
 
 def r3():
-    d = Dobot(6)
+    d = Dobot('/dev/dobot')
     d.jmove(0, 0, 0, 0, 1)
     time.sleep(1)
 
@@ -143,4 +235,14 @@ def r3():
     time.sleep(1)
 
 if __name__ == '__main__':
-    capshow(1)
+    d = Dobot('/dev/dobot')
+
+    print('moving to ', d.pos_zero())
+    d.move_zero()
+    time.sleep(1)
+
+    newpos = d.pos_zero() + np.array([0, 0, -160])
+    print('moving to ', newpos)
+    d.move_to(newpos)
+
+    time.sleep(1)
