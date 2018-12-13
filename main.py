@@ -4,6 +4,7 @@ import time
 import cv2
 import threading
 import numpy as np
+from aprilmisc import *
 
 from kin_commands import *
 
@@ -12,24 +13,27 @@ class Dobot:
     P = np.array([
         [0, 0, 0], [0, 0, 103], [0, 0, 135], [160, 0, 0], [43, 0, -72]])
 
-    def __init__(self, port):
+    def __init__(self, port='/dev/dobot'):
         self.interf = DobotSerialInterface(port)
         self.interf.set_speed()
         self.interf.set_ee_config()
         self.interf.set_playback_config()
 
     def debug(self):
-        print('Joint Angles: ' + str(self.interf.current_status.angles))
+        print('Joint Angles (deg): ' + str(self.interf.current_status.angles))
+
+    def angles(self):
+        return np.array(self.interf.current_status.angles) * math.pi / 180
 
     def jmove(self, base, rear, front, rot, suction):
+        rad = 180 / math.pi
         self.interf.send_angle_suction_command(
-            base, rear, front, rot, suction)
-        time.sleep(1)
+            base * rad, rear * rad, front * rad, rot * rad, suction)
 
     def zero(self):
         self.jmove(0, 0, 0, 0, 0)
 
-    def fkin(self, q):
+    def fwdkin(self, q):
         p01 = Dobot.P[0]
         p12 = Dobot.P[1]
         p23 = Dobot.P[2]
@@ -37,10 +41,12 @@ class Dobot:
         p4t = Dobot.P[4]
         return p01 + np.matmul(Rz(q[0]), (p12 + np.matmul(Ry(q[1]), (p23 + np.matmul(Ry(q[2]), (p34 + np.matmul(Ry(q[3]), p4t)))))))
 
-    def real_to_model_q(self, base, rear, front):
+    def real_to_model_q(self, qreal):
+        base, rear, front, rot = qreal
         return np.array([base, rear, front - rear, -front])
 
-    def model_to_real_q(self, q1, q2, q3, q4):
+    def model_to_real_q(self, qmodel):
+        q1, q2, q3, q4 = qmodel
         return np.array([q1, q2, q2 + q3])
 
     def invkin(self, p0t):
@@ -73,57 +79,59 @@ class Dobot:
 
         return [q1, q2, q3, q4]
 
-    def move_to(self, p0t):
+    def move_to(self, p0t, rot, suction):
         q = self.invkin(p0t)
-        qrv = self.model_to_real_q(q[0], q[1], q[2], q[3]) * 180 / math.pi
-        self.jmove(qrv[0] , qrv[1], qrv[2], 0, 0)
+        qrv = self.model_to_real_q(q)
+        self.jmove(qrv[0] , qrv[1], qrv[2], rot, suction)
 
     def pos_zero(self):
-        return self.fkin([0, 0, 0, 0])
+        return self.fwdkin([0, 0, 0, 0])
 
     def move_zero(self):
-        self.move_to(self.pos_zero())
+        self.move_to(self.pos_zero(), 0, 0)
+
+    def camera_move(self, delta, rot, suction):
+        # camera up (y) is into robot
+        # camera right (x) is to right of robot
+        qreal = self.angles()
+        qmodel = self.real_to_model_q(qreal)
+        cpos = self.fwdkin(qmodel)
+        base = qmodel[0]
+        dx, dy, dz = delta
+        npos = cpos + np.array([
+            -dy * math.cos(base) - dx * math.sin(base),
+            dx * math.cos(base) - dy * math.sin(base),
+            dz])
+        self.move_to(npos, rot, suction)
+
+    def center_apriltag(self, img, id, tagsize, K):
+        img, results = get_results(img)
+        res = next((t for t in results if t.tag_id == id), None)
+        if res == None:
+            print('Tag not found in image')
+            return ([0, 0], [0, 0])
+        else:
+            c = np.array(res.center)
+            imgcenter = np.array([img.shape[1], img.shape[0]]) / 2
+            error_pixels = np.append(imgcenter - c, 0)
+            dist_between_adj_points = norm(res.corners[0] - res.corners[1])
+            mm_per_pixel = tagsize / dist_between_adj_points
+            error_real = error_pixels * mm_per_pixel
+            error_real[1] = -error_real[1]
+            self.camera_move(-K * error_real, 0, 0)
+            return (error_pixels, error_real)
+            #print("Error: %s Pixel Size: %s MM per Pixel %s" %
+            # (str(error_real), str(dist_between_adj_points), str(mm_per_pixel)))
+
 
 def capshow(n):
     cap = cv2.VideoCapture(n)
     while True:
         ret, img = cap.read()
-        rows, cols, depth = img.shape
+        img, rs = get_results(img)
+        cv2.imshow('anno', annotate_image(img, rs))
 
-        #M = cv2.getRotationMatrix2D((cols/2,rows/2),90,1)
-        #dst = cv2.warpAffine(img,M,(cols,rows))
-
-        ratio = 3
-        lowv = 80
-
-        circs = False
-
-        if circs:
-            for c in object_centroids(img, lowv, ratio):
-                cv2.circle(img, c, 10, (255, 0, 0), -1)
-
-            cv2.imshow('circs', img)
-        else:
-            l, a, b = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2LAB))
-
-            clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
-            cl = clahe.apply(l)
-
-            f = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
-
-            # cv2.imshow('l', f)
-
-            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            h, s, v = cv2.split(hsv)
-
-            edge = cv2.Canny(f, lowv, lowv * ratio)
-            edges = np.repeat(edge[:, :, np.newaxis], 3, axis=2)
-
-            cv2.imshow('edges', f | edges)
-
-            #cv2.imshow('blobs', picture_to_blobs(img, lowv, ratio))
-
-        key = cv2.waitKey(100)
+        key = cv2.waitKey(1000 / 30)
         if key == 27:
             break
 
@@ -187,37 +195,6 @@ def object_centroids(img, lowv, ratio):
     Cy = [int(m['m01'] / m['m00']) for m in fM]
     return zip(Cx, Cy)
 
-def get_results(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    detector = apriltag.Detector()
-    return (img, detector.detect(gray))
-
-def annotate_image(img, rs):
-    first = True
-    for r in rs:
-        if first:
-            first = False
-        c = r.center
-        cv2.circle(img, tuple([int(x) for x in c]), 2, (r.tag_id, r.tag_id, r.tag_id))
-
-        corns = r.corners
-
-        i = 0
-        for corner in corns:
-            if i == 0:
-                c = (255, 0, 0)
-            elif i == 1:
-                c = (0, 255, 0)
-            elif i == 2:
-                c = (0, 0, 255)
-            else:
-                c = (0, 255, 255)
-
-            cv2.circle(img, tuple([int(x) for x in corner]), 2, c)
-            i += 1
-
-    return img
-
 def r2():
     acapshow(1)
     return Dobot(6)
@@ -235,14 +212,39 @@ def r3():
     time.sleep(1)
 
 if __name__ == '__main__':
-    d = Dobot('/dev/dobot')
+    d = Dobot()
+    cap = cv2.VideoCapture(0)
 
-    print('moving to ', d.pos_zero())
     d.move_zero()
     time.sleep(1)
+    print('zeroed')
 
-    newpos = d.pos_zero() + np.array([0, 0, -160])
-    print('moving to ', newpos)
-    d.move_to(newpos)
+    tagsize = 0.75 * 25.4
+    z = 160
+    dz = -60
 
-    time.sleep(1)
+    for i in range(30 * 20):
+        ret, img = cap.read()
+        if i % 30 == 0:
+            print(z)
+            if z <= 10:
+                print('Sub-ten')
+                break
+            pe, re = d.center_apriltag(img, 296, tagsize, 0.5)
+            time.sleep(0.1)
+            if norm(pe) < 10:
+                if z + dz < 10:
+                    print('One step left')
+                    dz = 10 - z
+                d.camera_move([0, 0, dz], 0, 0)
+                time.sleep(0.1)
+                z += dz
+
+        cv2.imshow('im', img)
+        cv2.waitKey(1000 / 30)
+
+    d.center_apriltag(img, 296, tagsize, 0.5)
+    time.sleep(0.1)
+
+    cv2.destroyAllWindows()
+    cap.release()
