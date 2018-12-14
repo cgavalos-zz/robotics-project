@@ -4,12 +4,15 @@ import cv2
 import numpy as np
 from aprilmisc import *
 from kin_commands import *
+from block import *
 
 class Dobot:
 
+    # all in mm
     P = np.array([
         [0, 0, 0], [0, 0, 103.1875], [0, 0, 135], [160, 0, 0], [42.8625, 0, -71.4375]])
     qo = np.array([0, -0.049, 0.074, 0])
+    tcv = np.array([66, 16.5, 0])
 
     def __init__(self, port='/dev/dobot'):
         self.interf = DobotSerialInterface(port)
@@ -17,11 +20,11 @@ class Dobot:
         self.interf.set_ee_config()
         self.interf.set_playback_config()
 
-    def debug(self):
-        print('Joint Angles (deg): ' + str(self.interf.current_status.angles))
-
-    def angles(self):
+    def joint_angles(self):
         return np.array(self.interf.current_status.angles) * math.pi / 180
+
+    def model_angles(self):
+        return self.real_to_model_q(self.joint_angles())
 
     def jmove(self, base, rear, front, rot, suction):
         rad = 180 / math.pi
@@ -30,6 +33,9 @@ class Dobot:
 
     def zero(self):
         self.jmove(0, 0, 0, 0, 0)
+
+    def t_to_c(self):
+        return np.matmul(Rz(self.model_angles()[0]), Dobot.tcv)
 
     def fwdkin(self, q):
         p01 = Dobot.P[0]
@@ -90,7 +96,7 @@ class Dobot:
         self.jmove(qrv[0] , qrv[1], qrv[2], rot, suction)
 
     def pos(self):
-        return self.fwdkin(self.real_to_model_q(self.angles()))
+        return self.fwdkin(self.real_to_model_q(self.joint_angles()))
 
     def pos_zero(self):
         return self.fwdkin([0, 0, 0, 0])
@@ -99,7 +105,7 @@ class Dobot:
         self.move_to(self.pos_zero(), 0, 0)
 
     def move_delta(self, delta, rot, suction):
-        qreal = self.angles()
+        qreal = self.joint_angles()
         qmodel = self.real_to_model_q(qreal)
         cpos = self.fwdkin(qmodel)
         npos = cpos + delta
@@ -108,7 +114,7 @@ class Dobot:
     def camera_move(self, cdelta, rot, suction):
         # camera up (y) is into robot
         # camera right (x) is to right of robot
-        qreal = self.angles()
+        qreal = self.joint_angles()
         base = qreal[0]
         dx, dy, dz = cdelta
         rdelta = np.array([
@@ -135,7 +141,6 @@ class Dobot:
         res = findResultByTagID(results, id)
 
         if res == None:
-            print('Tag not found in image')
             return None
         else:
             error_pixels, error_real = self.tag_pos_error(img, res, tagsize)
@@ -163,13 +168,36 @@ class Dobot:
                     if err_tup == None:
                         break
                     pe, re = err_tup
-                    print(norm(re))
                     if norm(re) < max_real_error:
                         cv2.destroyAllWindows()
                         return (pe, re)
-                cv2.imshow('img', img)
                 cv2.waitKey(1000 / fps)
                 i += 1
 
         cv2.destroyAllWindows()
         return None
+
+    def center_block(self, img, block, id):
+        img, res = get_results(img)
+        if id < 0:
+            r = next(iter(res), None)
+        else:
+            r = findResultByTagID(res, id)
+
+        if r == None:
+            print('Tag not in frame')
+            return 0
+        else:
+            # Find block up and right in camera space
+            up_c = r.corners[0] - r.corners[3]
+            up_c /= norm(up_c)
+            up_c[1] *= -1
+            rot = Rz(self.model_angles()[0] + math.pi / 2)
+            up = np.matmul(rot, np.append(up_c, 0))
+            right = np.matmul(Rz(-math.pi / 2), up)
+            delta = (block.dim[0]/2 - block.fulltagsize / 2) * right + (block.dim[1] / 2 - block.fulltagsize / 2) * up
+            self.move_delta(delta + self.t_to_c(), 0, 0)
+
+            theta_0 = math.atan2(up[1], up[0])
+
+            return theta_0
