@@ -1,17 +1,16 @@
 from DobotSerialInterface import DobotSerialInterface
 import time
-
 import cv2
 import threading
 import numpy as np
 from aprilmisc import *
-
 from kin_commands import *
 
 class Dobot:
 
     P = np.array([
-        [0, 0, 0], [0, 0, 103], [0, 0, 135], [160, 0, 0], [43, 0, -72]])
+        [0, 0, 0], [0, 0, 103.1875], [0, 0, 135], [160, 0, 0], [42.8625, 0, -71.4375]])
+    qo = np.array([0, -0.049, 0.074, 0])
 
     def __init__(self, port='/dev/dobot'):
         self.interf = DobotSerialInterface(port)
@@ -43,11 +42,18 @@ class Dobot:
 
     def real_to_model_q(self, qreal):
         base, rear, front, rot = qreal
-        return np.array([base, rear, front - rear, -front])
+        q1 = base
+        q2 = rear - Dobot.qo[1]
+        q3 = front - rear - Dobot.qo[2]
+        q4 = -q2 - q3
+        return np.array([q1, q2, q3, q4])
 
     def model_to_real_q(self, qmodel):
         q1, q2, q3, q4 = qmodel
-        return np.array([q1, q2, q2 + q3])
+        q1r = q1
+        q2r = q2 + Dobot.qo[1]
+        q3r = q2r + q3 + Dobot.qo[2]
+        return np.array([q1r, q2r, q3r])
 
     def invkin(self, p0t):
 
@@ -84,45 +90,90 @@ class Dobot:
         qrv = self.model_to_real_q(q)
         self.jmove(qrv[0] , qrv[1], qrv[2], rot, suction)
 
+    def pos(self):
+        return self.fwdkin(self.real_to_model_q(self.angles()))
+
     def pos_zero(self):
         return self.fwdkin([0, 0, 0, 0])
 
     def move_zero(self):
         self.move_to(self.pos_zero(), 0, 0)
 
-    def camera_move(self, delta, rot, suction):
-        # camera up (y) is into robot
-        # camera right (x) is to right of robot
+    def move_delta(self, delta, rot, suction):
         qreal = self.angles()
         qmodel = self.real_to_model_q(qreal)
         cpos = self.fwdkin(qmodel)
-        base = qmodel[0]
-        dx, dy, dz = delta
-        npos = cpos + np.array([
+        npos = cpos + delta
+        self.move_to(npos, rot, suction)
+
+    def camera_move(self, cdelta, rot, suction):
+        # camera up (y) is into robot
+        # camera right (x) is to right of robot
+        qreal = self.angles()
+        base = qreal[0]
+        dx, dy, dz = cdelta
+        rdelta = np.array([
             -dy * math.cos(base) - dx * math.sin(base),
             dx * math.cos(base) - dy * math.sin(base),
             dz])
-        self.move_to(npos, rot, suction)
+        self.move_delta(rdelta, rot, suction)
 
-    def center_apriltag(self, img, id, tagsize, K):
+    # tagsize in mm
+    def tag_pos_error(self, img, res, tagsize):
+        c = np.array(res.center)
+        imgcenter = np.array([img.shape[1], img.shape[0]]) / 2
+        error_pixels = np.append(imgcenter - c, 0)
+
+        dist_between_adj_points = norm(res.corners[0] - res.corners[1])
+        mm_per_pixel = tagsize / dist_between_adj_points
+        error_real = error_pixels * mm_per_pixel
+        error_real[1] = -error_real[1]
+        return (error_pixels, error_real)
+
+    # tagsize in mm
+    def center_apriltag_once(self, img, id, tagsize=0.5625, K=0.5, along_x=True, along_y=True):
         img, results = get_results(img)
-        res = next((t for t in results if t.tag_id == id), None)
+        res = findResultByTagID(results, id)
+
         if res == None:
             print('Tag not found in image')
-            return ([0, 0], [0, 0])
+            return None
         else:
-            c = np.array(res.center)
-            imgcenter = np.array([img.shape[1], img.shape[0]]) / 2
-            error_pixels = np.append(imgcenter - c, 0)
-            dist_between_adj_points = norm(res.corners[0] - res.corners[1])
-            mm_per_pixel = tagsize / dist_between_adj_points
-            error_real = error_pixels * mm_per_pixel
-            error_real[1] = -error_real[1]
+            error_pixels, error_real = self.tag_pos_error(img, res, tagsize)
+
+            if not along_x:
+                error_pixels[0] = 0
+                error_real[0] = 0
+            if not along_y:
+                error_pixels[1] = 0
+                error_real[1] = 0
             self.camera_move(-K * error_real, 0, 0)
             return (error_pixels, error_real)
-            #print("Error: %s Pixel Size: %s MM per Pixel %s" %
-            # (str(error_real), str(dist_between_adj_points), str(mm_per_pixel)))
 
+    def center_apriltag(self, img_func, fps, times_per_second, max_time,
+        max_real_error, id, tagsize=0.5625, K=0.5, along_x=True, along_y=True):
+        tstart = time.time()
+        i = 0
+
+        while True:
+                if time.time() - tstart > max_time:
+                    break
+                img = img_func()
+                if i % (fps / times_per_second) == 0:
+                    err_tup = self.center_apriltag_once(img, id, tagsize, K, along_x, along_y)
+                    if err_tup == None:
+                        break
+                    pe, re = err_tup
+                    print(norm(re))
+                    if norm(re) < max_real_error:
+                        cv2.destroyAllWindows()
+                        return (pe, re)
+                cv2.imshow('img', img)
+                cv2.waitKey(1000 / fps)
+                i += 1
+
+        cv2.destroyAllWindows()
+        return None
 
 def capshow(n):
     cap = cv2.VideoCapture(n)
@@ -211,40 +262,104 @@ def r3():
     d.zero()
     time.sleep(1)
 
-if __name__ == '__main__':
-    d = Dobot()
-    cap = cv2.VideoCapture(0)
 
+def r4():
+    cap = cv2.VideoCapture(1)
+
+    d = Dobot()
+    d.move_zero()
+    time.sleep(1)
+
+    print('zeroed')
+
+    tagsize = 9.0 / 16.0 * 25.4
+    z = 160
+    dz = -60
+
+    times_per_second = 2
+
+    total_time = 5.0
+
+    i = 0
+
+    while True:
+            ret, img = cap.read()
+            if i % (fps / times_per_second) == 0:
+                pe, re = d.center_apriltag(img, 129, tagsize, 0.9, along_x=True, along_y=False)
+                print(norm(re))
+                if norm(re) < 5:
+                    print('Centered')
+                    break
+            #img, res = get_results(img)
+            #cv2.imshow('final', annotate_image(img, res))
+            #cv2.waitKey(1000 / fps)
+            time.sleep(1000.0 / fps)
+            i += 1
+
+    ret, img = cap.read()
+    img, res = get_results(img)
+    cv2.imshow('final', annotate_image(img, res))
+    cap.release()
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+def r5():
+    cap = cv2.VideoCapture(2)
+
+    d = Dobot()
+    d.zero()
     d.move_zero()
     time.sleep(1)
     print('zeroed')
 
-    tagsize = 0.75 * 25.4
+    tagsize = 9.0 / 16.0 * 25.4
     z = 160
     dz = -60
 
-    for i in range(30 * 20):
+    times_per_second = 5
+    fps = 30
+    max_time = 10
+    max_real_error = 5
+    id = 129
+    K = 0.5
+
+    def img_func():
         ret, img = cap.read()
-        if i % 30 == 0:
-            print(z)
-            if z <= 10:
-                print('Sub-ten')
-                break
-            pe, re = d.center_apriltag(img, 296, tagsize, 0.5)
-            time.sleep(0.1)
-            if norm(pe) < 10:
-                if z + dz < 10:
-                    print('One step left')
-                    dz = 10 - z
-                d.camera_move([0, 0, dz], 0, 0)
-                time.sleep(0.1)
-                z += dz
+        return img
 
-        cv2.imshow('im', img)
-        cv2.waitKey(1000 / 30)
+    print(d.center_apriltag(img_func, fps, times_per_second, max_time, max_real_error, id, tagsize, K))
+    time.sleep(1.5)
+    d.move_delta([0, 0, -100], 0, 0)
+    time.sleep(1.5)
+    print(d.center_apriltag(img_func, fps, times_per_second, max_time, max_real_error, id, tagsize, K))
+    time.sleep(1.5)
+    d.move_delta([0, 0, -50], 0, 0)
+    time.sleep(1.5)
+    print(d.center_apriltag(img_func, fps, times_per_second, max_time, max_real_error, id, tagsize, K))
+    time.sleep(1.5)
+    print('done')
 
-    d.center_apriltag(img, 296, tagsize, 0.5)
-    time.sleep(0.1)
+def r6():
+    d = Dobot()
+    d.zero()
+    d.move_zero()
+    time.sleep(2)
+    p = d.pos()
+    print('Zero pos: ' + str(p / 25.4))
+    p[0] = 0
+    d.move_delta(-p, 0, 0)
+    time.sleep(2)
+    print('z=0 pos:  ' + str(d.pos() / 25.4))
 
-    cv2.destroyAllWindows()
-    cap.release()
+def r7():
+    d = Dobot()
+    d.zero()
+    time.sleep(2)
+    print('Joint zero: ' + str(d.pos()))
+    d.move_zero()
+    time.sleep(2)
+    print('Model zero: ' + str(d.pos()))
+
+if __name__ == '__main__':
+    #aprildebug(1)
+    r6()

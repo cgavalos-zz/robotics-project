@@ -31,3 +31,34 @@ def annotate_image(img, rs):
             i += 1
 
     return img
+
+def findResultByTagID(results, id):
+    return next((t for t in results if t.tag_id == id), None)
+
+def aprildebug(n):
+    cap = cv2.VideoCapture(n)
+
+    while True:
+        ret, img = cap.read()
+
+        img, res = get_results(img)
+
+        img = annotate_image(img, res)
+
+        intuple = lambda a: tuple([int(i) for i in a])
+
+        for r in res:
+            up = r.corners[0] - r.corners[3]
+
+            cv2.line(img, intuple(r.center), intuple(r.center + up), (255, 255, 255))
+            cv2.putText(img, str(r.tag_id), intuple(r.center), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 0, 128), 2, cv2.LINE_AA)
+
+
+        cv2.imshow('apriltag-debug', img)
+
+        key = cv2.waitKey(1000 / 30)
+        if key == 27:
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
