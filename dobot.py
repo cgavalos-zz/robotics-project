@@ -178,12 +178,10 @@ class Dobot:
                         break
                     pe, re = err_tup
                     if norm(re) < max_real_error:
-                        cv2.destroyAllWindows()
                         return (pe, re)
                 cv2.waitKey(1000 / fps)
                 i += 1
-
-        cv2.destroyAllWindows()
+                
         return None
 
     def center_block(self, img, block, id):
