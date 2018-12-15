@@ -13,6 +13,7 @@ class Dobot:
         [0, 0, 0], [0, 0, 103.1875], [0, 0, 135], [160, 0, 0], [42.8625, 0, -71.4375]])
     qo = np.array([0, -0.049, 0.074, 0])
     tcv = np.array([66, 16.5, 0])
+    time_move_margin = 0.5
 
     def __init__(self, port='/dev/dobot'):
         self.interf = DobotSerialInterface(port)
@@ -22,6 +23,14 @@ class Dobot:
 
     def joint_angles(self):
         return np.array(self.interf.current_status.angles) * math.pi / 180
+
+    def wait_until_stopped(self):
+        j = self.joint_angles()
+        time.sleep(Dobot.time_move_margin)
+        while norm(self.joint_angles() - j) == 0.0:
+            j = self.joint_angles()
+            time.sleep(Dobot.time_move_margin)
+        time.sleep(Dobot.time_move_margin)
 
     def model_angles(self):
         return self.real_to_model_q(self.joint_angles())
