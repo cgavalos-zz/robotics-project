@@ -47,21 +47,25 @@ def center_demo():
     time.sleep(1)
     print('Dobot zeroed')
 
-    z = 160
-    dz = -60
+    # Block info
+    block = Block()
 
+    # Centering info
     times_per_second = 2
     fps = 30
     max_time = 5
     max_real_error = 10
     max_real_error_2 = 1
-    block = Block()
     sheight = d.pos_zero()[2]
     delta_z_closeup = block.dim[2] + 40 - sheight
     K = 0.9
 
-    n = 10
+    # Build site information
+    q1bo = math.pi / 3
+    theta_0dg = 0
+    p0tdg = np.array([200, 0, 0])
 
+    #n = 10
     #for i in range(n):
     #    cap = cv2.VideoCapture(i)
     #    if cap.isOpened():
@@ -71,7 +75,7 @@ def center_demo():
     print('Starting stream')
 
     fps = 30
-    vs = VideoStream(5, fps)
+    vs = VideoStream(2, fps)
     vs.start()
 
     print('Stream started')
@@ -114,50 +118,53 @@ def center_demo():
         else:
             pe, re = c2
             print('Centered with error: %f mm' % norm(re))
-        time.sleep(0.5)
+        time.sleep(1)
+        print('Centered on tag #%i' % id)
 
         # Find 'up' and 'right'
         # Calculate theta_0
 
         img = img_func()
-        theta_0 = d.center_block(img, block, id)
-        print('theta_0: ' + str(theta_0))
+        frame, block_top, theta_0 = d.locate_block(img, block, id)
 
+        d.move_to(block_top + np.array([0, 0, 10]), 0, 0)
+        time.sleep(1)
         print('Centered on block')
 
-        time.sleep(1.5)
+        d.move_to(block_top + np.array([0, 0, -2]), 0, 1)
+        time.sleep(1)
+        print(' Picking up block')
 
-        delta = d.pos()
-        delta[0] = 0
-        delta[1] = 0
-        delta[2] = -delta[2] + block.dim[2] - 2
-        d.move_delta(delta, 0, 1)
+        #d_theta = round(theta_0 / math.pi) * math.pi - theta_0
+        p0td = np.matmul(Rz(q1bo), p0tdg)
+        q1p = d.invkin(p0td)[0]
+        dtheta = theta_0dg + q1bo - theta_0 + d.model_angles()[0] - q1p
 
-        print('Picking up block')
+        dtheta = (dtheta + math.pi / 2) % math.pi - math.pi / 2
 
-        time.sleep(0.5)
 
-        d_theta = round(theta_0 / math.pi) * math.pi - theta_0
 
-        d.move_delta([0, 0, 100], d_theta, 1)
+        new_pos = d.pos()
+        new_pos[2] = 160
+        d.move_to(new_pos, 0, 1)
         print('Moving up')
 
         time.sleep(2)
 
-        d.move_to([100, 250, block.dim[2] * (num + 1) + 5], d_theta, 1)
+        d.move_to(p0td + np.array([0, 0, block.dim[2] * (num + 1) + 3]), dtheta, 1)
         print('Moving to new spot')
         time.sleep(2)
-        d.move_delta([0, 0, 0], d_theta, 0)
-        time.sleep(1)
-        np = d.pos()
-        np[2] = 150
-        d.move_to(np, 0, 0)
+        d.move_delta([0, 0, 0], dtheta, 0)
+        time.sleep(2)
+        new_pos = d.pos()
+        new_pos[2] = 150
+        d.move_to(new_pos, 0, 0)
         num += 1
         print('Letting go')
         time.sleep(2)
         d.zero()
         print('Zeroing')
-        time.sleep(3)
+        time.sleep(2)
 
     vs.stop()
     cv2.destroyAllWindows()

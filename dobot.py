@@ -181,10 +181,11 @@ class Dobot:
                         return (pe, re)
                 cv2.waitKey(1000 / fps)
                 i += 1
-                
+
         return None
 
-    def center_block(self, img, block, id):
+    # Returns block frame in 0, block top position in 0, and theta_0
+    def locate_block(self, img, block, id):
         img, res = get_results(img)
         if id < 0:
             r = next(iter(res), None)
@@ -199,12 +200,15 @@ class Dobot:
             up_c = r.corners[0] - r.corners[3]
             up_c /= norm(up_c)
             up_c[1] *= -1
-            rot = Rz(self.model_angles()[0] + math.pi / 2)
-            up = np.matmul(rot, np.append(up_c, 0))
-            right = np.matmul(Rz(-math.pi / 2), up)
-            delta = (block.dim[0]/2 - block.fulltagsize / 2) * right + (block.dim[1] / 2 - block.fulltagsize / 2) * up
-            self.move_delta(delta + self.t_to_c(), 0, 0)
+            theta_c = math.atan2(up_c[1], up_c[0])
+            theta_0 = self.model_angles()[0] + theta_c + math.pi / 2
 
-            theta_0 = math.atan2(up[1], up[0])
+            up_0 = np.matmul(Rz(theta_0), np.array([1, 0, 0]))
+            right_0 = np.matmul(Rz(-math.pi / 2), up_0)
 
-            return theta_0
+            delta = (block.dim[0] / 2 - block.fulltagsize / 2) * right_0 + \
+                (block.dim[1] / 2 - block.fulltagsize / 2) * up_0
+            block_top = self.pos() + self.t_to_c() + delta
+            block_top[2] = block.dim[2]
+
+            return ((up_0, right_0), block_top, theta_0)
