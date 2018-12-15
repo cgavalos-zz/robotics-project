@@ -55,20 +55,11 @@ def center_demo():
     max_real_error = 10
     max_real_error_2 = 1
     sheight = d.pos_zero()[2]
-    delta_z_closeup = block.dim[2] + 40 - sheight
+    delta_z_closeup = block.dim[2] + 50 - sheight
     K = 0.9
 
     # Build site information
     q1bo = math.pi / 3
-    theta_0dg = 0
-    p0tdg = np.array([200, 0, 0])
-
-    #n = 10
-    #for i in range(n):
-    #    cap = cv2.VideoCapture(i)
-    #    if cap.isOpened():
-    #        print('%i opened!' % i)
-    #    cap.release()
 
     print('Starting stream')
 
@@ -82,16 +73,21 @@ def center_demo():
 
     num = 0
 
-    while True:
+    locs, angs = poses_from_struct('logcabin.txt')
+
+    while num < len(locs):
         img, res = get_results(img_func())
         cv2.imshow('img', debugannotate(img, res))
+        cv2.waitKey(30)
         if len(res) == 0:
             print('No tags!')
             break
+
         if len(res) == 1:
             tag = res[0]
         else:
             tag = res[random.randrange(0, len(res) - 1)]
+
         if tag == None:
             print('No tags!')
             break
@@ -99,63 +95,21 @@ def center_demo():
             id = tag.tag_id
             print('Choosing tag #' + str(id))
 
-        # Center on april tag
+        loc = locs[num]
+        ang = angs[num]
 
-        pe, re = d.tag_pos_error(img, tag, block.tagsize)
-        d.camera_move([0, 0, delta_z_closeup], 0, 0)
-        d.camera_move(-re, 0, 0)
+        block_properties = (id, loc, ang, block)
+        build_properties = (q1bo)
+        imaging_properties = (img_func, delta_z_closeup, fps, \
+            times_per_second, max_time, max_real_error_2, K)
 
-        c2 = d.center_apriltag(img_func, fps, times_per_second, max_time, max_real_error_2, id, block.tagsize, K)
-        if c2 == None:
-            print('Tag not in frame')
-            d.move_zero()
-            break
-        else:
-            pe, re = c2
-            print('Centered with error: %f mm' % norm(re))
+        if d.pick_and_place(block_properties, build_properties, imaging_properties):
+            num += 1
 
-        print('Centered on tag #%i' % id)
-
-        # Find 'up' and 'right'
-        # Calculate theta_0
-
-        img = img_func()
-        frame, block_top, theta_0 = d.locate_block(img, block, id)
-
-        d.move_to(block_top + np.array([0, 0, 10]), 0, 0)
-        print('Centered on block')
-
-        d.move_to(block_top + np.array([0, 0, -2]), 0, 1)
-        print('Picking up block')
-
-        #d_theta = round(theta_0 / math.pi) * math.pi - theta_0
-        p0td = np.matmul(Rz(q1bo), p0tdg)
-        q1p = d.invkin(p0td)[0]
-        dtheta = theta_0dg + q1bo - theta_0 + d.model_angles()[0] - q1p
-
-        dtheta = (dtheta + math.pi / 2) % math.pi - math.pi / 2
-
-
-
-        new_pos = d.pos()
-        new_pos[2] = 160
-        d.move_to(new_pos, 0, 1)
-        print('Moving up')
-
-        d.move_to(p0td + np.array([0, 0, block.dim[2] * (num + 1) + 3]), dtheta, 1)
-        print('Moving to new spot')
-
-        d.move_delta([0, 0, 0], dtheta, 0)
-        print('Letting go')
-
-        new_pos = d.pos()
-        new_pos[2] = 150
-        d.move_to(new_pos, 0, 0)
-        num += 1
-        print('Moving up')
-
-        d.zero()
-        print('Zeroing')
+    if num + 1 == len(locs):
+        print('Building complete')
+    else:
+        print('Building incomplete')
 
     vs.stop()
     cv2.destroyAllWindows()
@@ -187,9 +141,46 @@ def calib():
     d.jmove(0, 0.1, 0.1, 0, 0)
     d.move_zero()
 
+def test_bounds():
+    d = Dobot()
+    d.zero()
+    d.move_zero()
+
+    lx = 200
+    hx = 300
+    ly = -50
+    hy = 50
+    lz = 2
+    hz = 90
+
+    zpos = np.array([(lx + hx) / 2, (ly + hy) / 2, hz + 10])
+    bounds = np.array([[lx, ly, lz], [hx, ly, lz], [hx, hy, lz], [lx, hy, lz],
+        [lx, ly, hz], [hx, ly, hz], [hx, hy, hz], [lx, hy, hz]])
+    for b in bounds:
+        d.move_to(b, 0, 0)
+        d.move_to(zpos, 0, 0)
+
+    d.move_zero()
+
+def poses_from_struct(filename):
+    locs = []
+    angs = []
+
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            x, y, z, theta = [float(x) for x in line.split(' ')]
+            locs.append(np.array([x, y, z]))
+            angs.append(theta)
+
+    locs = np.array(locs)
+    angs = np.array(angs)
+    return (locs, angs)
+
 if __name__ == '__main__':
     #debug(6)
     center_demo()
     #wait_demo()
     #calib()
     #test_model_real()
+    #test_bounds()

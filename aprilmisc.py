@@ -32,7 +32,7 @@ def annotate_image(img, rs):
 
     return img
 
-def findResultByTagID(results, id):
+def find_result_by_tag_id(results, id):
     return next((t for t in results if t.tag_id == id), None)
 
 def debugannotate(img, res):

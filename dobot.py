@@ -10,7 +10,8 @@ class Dobot:
 
     # all in mm
     P = np.array([
-        [0, 0, 0], [0, 0, 103.1875], [0, 0, 135], [160, 0, 0], [42.8625, 0, -71.4375]])
+        [0, 0, 0], [0, 0, 103.1875], [0, 0, 135], [160, 0, 0],
+        [42.8625, 0, -71.4375]])
     qo = np.array([0, -0.049, 0.074, 0])
     tcv = np.array([66, 16.5, 0])
     time_move_margin = 0.5
@@ -36,7 +37,7 @@ class Dobot:
     def model_angles(self):
         return self.real_to_model_q(self.joint_angles())
 
-    def jmove(self, base, rear, front, rot, suction, auto_wait=True):
+    def jmove(self, base, rear, front, rot, suction, auto_wait=True, debug=False):
         rad = 180 / math.pi
 
         base_old, rear_old, front_old, rot_old = self.joint_angles()
@@ -67,8 +68,18 @@ class Dobot:
             base_wait = 0.1
             FOSwait = 1.1
 
-            time.sleep(max(
-                base_time, rear_time, front_time, rot_time, suction_time) * FOSwait + base_wait)
+            wait_time = max(
+                base_time, rear_time, front_time, rot_time, suction_time) * \
+                FOSwait + base_wait
+            if debug:
+                print('Joint move: (%s, %s, %s, %s) with suction = %i (%s sec)' % \
+                    (round(base, 3), round(rear, 3), round(front, 3),
+                    round(rot, 3), suction, round(wait_time, 2)))
+            time.sleep(wait_time)
+        elif debug:
+            print('Joint move: (%s, %s, %s, %s) with suction = %i (0 sec)' % \
+                (round(base, 3), round(rear, 3), round(front, 3),
+                round(rot, 3), suction))
         self.suction = suction
 
     def zero(self):
@@ -178,7 +189,7 @@ class Dobot:
     # tagsize in mm
     def center_apriltag_once(self, img, id, tagsize=0.5625, K=0.5, along_x=True, along_y=True):
         img, results = get_results(img)
-        res = findResultByTagID(results, id)
+        res = find_result_by_tag_id(results, id)
 
         if res == None:
             return None
@@ -221,7 +232,7 @@ class Dobot:
         if id < 0:
             r = next(iter(res), None)
         else:
-            r = findResultByTagID(res, id)
+            r = find_result_by_tag_id(res, id)
 
         if r == None:
             print('Tag not in frame')
@@ -243,3 +254,86 @@ class Dobot:
             block_top[2] = block.dim[2]
 
             return ((up_0, right_0), block_top, theta_0)
+
+    # block_properties (id, loc, ang, block)
+    # build_properties (q1bo)
+    # imaging_properties (img_func, delta_z_closeup, fps, times_per_second,
+    # max_time, max_real_error, K)
+    # Returns: False if failure, True if success
+    def pick_and_place(self, block_properties, build_properties, imaging_properties):
+        id, loc, ang, block = block_properties
+        q1bo = build_properties
+        img_func, delta_z_closeup, fps, times_per_second, max_time, \
+        max_real_error, K = imaging_properties
+
+        # Center on april tag
+        img, res = get_results(img_func())
+        tag = find_result_by_tag_id(res, id)
+        if tag == None:
+            return False
+
+        cv2.imshow('img', debugannotate(img, res))
+        cv2.waitKey(30)
+        pe, re = self.tag_pos_error(img, tag, block.tagsize)
+        self.camera_move([0, 0, delta_z_closeup], 0, 0)
+        self.camera_move(-re, 0, 0)
+
+        img, res = get_results(img_func())
+        cv2.imshow('img', debugannotate(img, res))
+        cv2.waitKey(30)
+        c2 = self.center_apriltag(img_func, fps, times_per_second, max_time, max_real_error, id, block.tagsize, K)
+        if c2 == None:
+            print('Tag not in frame')
+            self.move_zero()
+            return False
+        else:
+            pe, re = c2
+            print('Centered with error: %f mm' % norm(re))
+
+        print('Centered on tag #%i' % id)
+
+        # Find 'up' and 'right'
+        # Calculate theta_0
+
+        img = img_func()
+        frame, block_top, theta_0 = self.locate_block(img, block, id)
+
+        self.move_to(block_top + np.array([0, 0, 10]), 0, 0)
+        print('Centered on block')
+
+        self.move_to(block_top + np.array([0, 0, -4]), 0, 1)
+        print('Picking up block')
+
+        #d_theta = round(theta_0 / math.pi) * math.pi - theta_0
+        p0td = np.matmul(Rz(q1bo), loc + np.array([250, 0, 0]))
+        q1p = self.invkin(p0td)[0]
+        dtheta = ang + q1bo - theta_0 + self.model_angles()[0] - q1p
+
+        dtheta = (dtheta + math.pi / 2) % math.pi - math.pi / 2
+
+        new_pos = self.pos()
+        new_pos[2] = 160
+        self.move_to(new_pos, 0, 1)
+        print('Moving up')
+
+        print('Moving above final block position')
+        above = np.array(p0td)
+        above[2] = 160
+        self.move_to(above, dtheta, 1)
+        print('above ', above)
+        print('potd ', p0td)
+        self.move_to(p0td + np.array([0, 0, 4]), dtheta, 1)
+        print('Moving to new spot')
+
+        self.move_delta([0, 0, 0], dtheta, 0)
+        print('Letting go')
+
+        new_pos = self.pos()
+        new_pos[2] = 150
+        self.move_to(new_pos, 0, 0)
+        print('Moving up')
+
+        self.zero()
+        print('Zeroing')
+
+        return True
