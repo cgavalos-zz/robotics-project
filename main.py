@@ -42,9 +42,7 @@ def center_demo():
     print('Dobot found')
     d.zero()
     d.zero()
-    time.sleep(1)
     d.move_zero()
-    time.sleep(1)
     print('Dobot zeroed')
 
     # Block info
@@ -85,7 +83,6 @@ def center_demo():
     num = 0
 
     while True:
-        time.sleep(1)
         img, res = get_results(img_func())
         cv2.imshow('img', debugannotate(img, res))
         if len(res) == 0:
@@ -106,9 +103,7 @@ def center_demo():
 
         pe, re = d.tag_pos_error(img, tag, block.tagsize)
         d.camera_move([0, 0, delta_z_closeup], 0, 0)
-        time.sleep(1)
         d.camera_move(-re, 0, 0)
-        time.sleep(1.5)
 
         c2 = d.center_apriltag(img_func, fps, times_per_second, max_time, max_real_error_2, id, block.tagsize, K)
         if c2 == None:
@@ -118,7 +113,7 @@ def center_demo():
         else:
             pe, re = c2
             print('Centered with error: %f mm' % norm(re))
-        time.sleep(1)
+
         print('Centered on tag #%i' % id)
 
         # Find 'up' and 'right'
@@ -128,12 +123,10 @@ def center_demo():
         frame, block_top, theta_0 = d.locate_block(img, block, id)
 
         d.move_to(block_top + np.array([0, 0, 10]), 0, 0)
-        time.sleep(1)
         print('Centered on block')
 
         d.move_to(block_top + np.array([0, 0, -2]), 0, 1)
-        time.sleep(1)
-        print(' Picking up block')
+        print('Picking up block')
 
         #d_theta = round(theta_0 / math.pi) * math.pi - theta_0
         p0td = np.matmul(Rz(q1bo), p0tdg)
@@ -149,22 +142,20 @@ def center_demo():
         d.move_to(new_pos, 0, 1)
         print('Moving up')
 
-        time.sleep(2)
-
         d.move_to(p0td + np.array([0, 0, block.dim[2] * (num + 1) + 3]), dtheta, 1)
         print('Moving to new spot')
-        time.sleep(2)
+
         d.move_delta([0, 0, 0], dtheta, 0)
-        time.sleep(2)
+        print('Letting go')
+
         new_pos = d.pos()
         new_pos[2] = 150
         d.move_to(new_pos, 0, 0)
         num += 1
-        print('Letting go')
-        time.sleep(2)
+        print('Moving up')
+
         d.zero()
         print('Zeroing')
-        time.sleep(2)
 
     vs.stop()
     cv2.destroyAllWindows()
@@ -173,21 +164,17 @@ def test_model_real():
     d = Dobot()
     d.zero()
     d.move_zero()
-    time.sleep(2)
     p = d.pos()
     print('Zero pos: ' + str(p / 25.4))
     p[0] = 0
     d.move_delta(-p, 0, 0)
-    time.sleep(2)
     print('z=0 pos:  ' + str(d.pos() / 25.4))
 
 def jzero_vs_modelzero():
     d = Dobot()
     d.zero()
-    time.sleep(2)
     print('Joint zero: ' + str(d.pos()))
     d.move_zero()
-    time.sleep(2)
     print('Model zero: ' + str(d.pos()))
 
 def debug(n):
@@ -195,38 +182,10 @@ def debug(n):
     d.move_zero()
     aprildebug(n)
 
-def wait_demo():
-    d = Dobot()
-    d.zero()
-    time.sleep(3)
-    d.move_zero()
-    time.sleep(3)
-
-    d.move_to([200, 0, 10], 0, 0)
-    time.sleep(3)
-
-    d.move_zero()
-    time.sleep(3)
-
-    for i in range(4):
-        d.move_to([200, 0, 10], 0, 0)
-        d.wait_until_stopped()
-        print('stopped move')
-        d.move_zero()
-        d.wait_until_stopped()
-        print('stopped zero')
-
-    print('Loop done')
-
-    time.sleep(1)
-    print('Stopped')
-
 def calib():
     d = Dobot()
     d.jmove(0, 0.1, 0.1, 0, 0)
-    time.sleep(1)
     d.move_zero()
-    time.sleep(1)
 
 if __name__ == '__main__':
     #debug(6)

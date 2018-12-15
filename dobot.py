@@ -20,6 +20,7 @@ class Dobot:
         self.interf.set_speed()
         self.interf.set_ee_config()
         self.interf.set_playback_config()
+        self.suction = 0
 
     def joint_angles(self):
         return np.array(self.interf.current_status.angles) * math.pi / 180
@@ -35,10 +36,40 @@ class Dobot:
     def model_angles(self):
         return self.real_to_model_q(self.joint_angles())
 
-    def jmove(self, base, rear, front, rot, suction):
+    def jmove(self, base, rear, front, rot, suction, auto_wait=True):
         rad = 180 / math.pi
+
+        base_old, rear_old, front_old, rot_old = self.joint_angles()
+
+        # Interface takes angles as degrees.
+        # Angles: base, rear, etc. are in radians.
         self.interf.send_angle_suction_command(
             base * rad, rear * rad, front * rad, rot * rad, suction)
+
+        if auto_wait:
+            base_speed_inv = 1.5 / 1.5 # s/rad
+            base_time = base_speed_inv * abs(base - base_old)
+
+            rear_speed_inv = 1 / 0.5 # s/rad
+            rear_time = rear_speed_inv * abs(rear - rear_old)
+
+            front_speed_inv = 1.1 / 0.5 # s/rad
+            front_time = front_speed_inv * abs(front - front_old)
+
+            rot_speed_inv = 1.1 / 0.5 # s/rad
+            rot_time = rot_speed_inv * abs(rot - rot_old)
+
+            if self.suction != suction:
+                suction_time = 0.25 #s
+            else:
+                suction_time = 0.0
+
+            base_wait = 0.1
+            FOSwait = 1.1
+
+            time.sleep(max(
+                base_time, rear_time, front_time, rot_time, suction_time) * FOSwait + base_wait)
+        self.suction = suction
 
     def zero(self):
         self.jmove(0, 0, 0, 0, 0)
