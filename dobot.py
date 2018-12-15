@@ -5,6 +5,7 @@ import numpy as np
 from aprilmisc import *
 from kin_commands import *
 from block import *
+import random
 
 class Dobot:
 
@@ -337,3 +338,43 @@ class Dobot:
         print('Zeroing')
 
         return True
+
+    def build_struct(self, filename, block, build_properties, imaging_properties):
+        num = 0
+        locs, angs = poses_from_struct(filename)
+        img_func = imaging_properties[0]
+
+        while num < len(locs):
+            img, res = get_results(img_func())
+            cv2.imshow('img', debugannotate(img, res))
+            cv2.waitKey(30)
+            if len(res) == 0:
+                print('No tags!')
+                break
+
+            if len(res) == 1:
+                tag = res[0]
+            else:
+                tag = res[random.randrange(0, len(res) - 1)]
+
+            if tag == None:
+                print('No tags!')
+                break
+            else:
+                id = tag.tag_id
+                print('Choosing tag #' + str(id))
+
+            loc = locs[num]
+            ang = angs[num]
+
+            block_properties = (id, loc, ang, block)
+
+            if self.pick_and_place(block_properties, build_properties, imaging_properties):
+                num += 1
+
+        if num == len(locs):
+            print('Building complete')
+            return True
+        else:
+            print('Building incomplete')
+            return False
