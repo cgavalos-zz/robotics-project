@@ -14,7 +14,7 @@ class Dobot:
         [0, 0, 0], [0, 0, 103.1875], [0, 0, 135], [160, 0, 0],
         [42.8625, 0, -71.4375]])
     qo = np.array([0, -0.049, 0.074, 0])
-    tcv = np.array([66, 16.5, 0])
+    tcv = np.array([66, 20, 0])
     time_move_margin = 0.5
 
     def __init__(self, port='/dev/dobot'):

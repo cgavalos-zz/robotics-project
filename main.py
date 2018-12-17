@@ -75,18 +75,23 @@ def main():
     imaging_properties = (img_func, delta_z_closeup, fps, \
         times_per_second, max_time, max_real_error_2, K)
 
-    f1 = 'coolstruct.txt'
-    f2 = 'logcabin.txt'
+    if False:
+        f1 = 'coolstruct.txt'
+        f2 = 'logcabin.txt'
 
-    res = d.build_struct(f1, block, build_properties,
-        imaging_properties)
-    if res:
-        print('%s constructed...' % f1)
-        res = d.build_struct(f2, block, build_properties,
+        res = d.build_struct(f1, block, build_properties,
             imaging_properties)
+        if res:
+            print('%s constructed...' % f1)
+            res = d.build_struct(f2, block, build_properties,
+                imaging_properties)
 
-    if res:
-        print('%s constructed...' % f2)
+        if res:
+            print('%s constructed...' % f2)
+    else:
+        f1 = 'stacc.txt'
+        d.build_struct(f1, block, build_properties,
+            imaging_properties)
 
     vs.stop()
     cv2.destroyAllWindows()
